@@ -1,0 +1,288 @@
+---
+title: "Datenaufbau und Analyse"
+format: html
+editor: visual
+
+project:
+  type: default
+  
+execute:
+  echo: true
+  warning: false
+---
+
+## 0. Libraries laden & Working Directory setzen
+
+```{r}
+library(vdemdata)
+library(knitr)
+library(rprojroot)
+library(tidyverse)
+library(countrycode)
+library(jsonlite)
+library(haven)
+library(vdemdata)
+library(openxlsx)
+library(ggplot2)
+library(whereami)
+
+# Main Directory
+rootpath = "E:/Meine Ablage/Uni/Archiv/4. Semester/Seminar Wahlsysteme/Hausarbeit/R Script and Datasets/Abgabe/"
+
+```
+
+# 1. Datensatz Aufbauen
+
+Es werden folgende Daten gesammelt:
+
+1.  Länder zentriert: VDEM Daten - Wahlsystem
+    1.  year:
+    2.  country_text_id:/
+    3.  v2elloseat:
+    4.  v2elthresh:
+    5.  v2psbars:
+    6.  v2psparban:
+    7.  v2psbantar_0:
+    8.  v2psbantar_1:
+    9.  v2lgdomchm_ord:
+    10. v2elrstrct:
+    11. v2elthres:
+2.  Parteien/parlament zentriert: Alle Parteien/fraktionslose Abgeordnete, welche Minderheit sie vertreten, wieviele Sitze sie im Parlament haben
+
+VDEM: Neuste Daten von 2023 oder so
+
+EPR: Neuste Daten von 2020
+
+## 1.1 Fallauswahl
+
+Kriterien: Mindestens zwei ethnische Gruppen im Land, Mindestlevel an Demokratie:
+
+-   e_v2x_polyarchy_5C:
+
+    -   0.0 as ~~"Closed Autocratic"~~
+
+    -   0.25 as ~~"Autocratic"~~
+
+    -   0.5 as ~~"Ambivalent"~~
+
+    -   0.75 as "Minimally Democratic",
+
+    -   and 1.0 as "Democratic
+
+### 1.1.1 VDEM laden & nach Demokratielevel filtern
+
+**vdem_final** anlegen:
+
+-   Untersuchungszeitraum festlegen (aktuell 2010 bis 2019)
+-   Aktuellstes Wahljahr für jedes Land auswählen: gruppieren nach Land -/\> *v2eltype_1 == 1* ist nur für das jeweilige Wahljahr wahr
+-   *slice_max:* nur das neuste Jahr behalten
+-   *e_v2x_polyarchy_5C:* Nach Demokratielevel filtern
+
+```{r}
+vdem_reduced <- vdem %>% 
+  select(country_name, country_text_id, year, v2eltype_0, v2eltype_1, e_v2x_polyarchy_5C) %>%
+  group_by(country_text_id) %>%
+  filter(year >= 2010 & year <= 2020) %>%   
+  filter(v2eltype_1 == 1 | v2eltype_0 == 1) %>% 
+  filter(e_v2x_polyarchy_5C >= 0.75) %>% 
+  slice_max(year, with_ties = FALSE) %>%  
+  select(-v2eltype_1,-v2eltype_0)
+
+vdem_other <- vdem %>% 
+  select(year, country_text_id, v2psparban, v2psbantar_0, v2psbantar_1, v2elrstrct, v2elparlel) 
+
+
+vdem_final <- merge.data.frame(vdem_reduced, vdem_other, by = c('country_text_id', 'year')) 
+
+rm(vdem_other, vdem_reduced)
+
+```
+
+Anzahl Fälle nach Demokratielevel Filter: `{r} nrow(vdem_final)`
+
+### 1.1.2 EPR Group Data laden & filtern
+
+EPR Group & Country Data Laden und alle Länder mit weniger als zwei ethnic groups herausfiltern
+
+```{r}
+
+epr_group_csv_path <- paste0(rootpath, "final_data/epr_group_level.csv")
+epr_country_csv_path <- paste0(rootpath, "final_data/epr_country.csv")
+
+if(!exists("epr_group_raw")){
+  print("Loading EPR Country...")
+  epr_group_raw <- read.csv(epr_group_csv_path)    
+  print("EPR Group loaded!")
+}
+
+if(!exists("epr_country_raw")){
+  print("Loading EPR Country...")
+  epr_country_raw <- read.csv(epr_country_csv_path)    
+  print("EPR Country loaded!")
+}
+
+# TODO: Theoretisch für jedes Land zum jeweiligen Zeitpunkt die ethnische Zusammensetzung filter statt year == 2019
+epr_country <- epr_country_raw %>% mutate(
+  country_text_id = countrycode(epr_country_raw$countryname, origin = "country.name", 
+                                destination = "iso3c", 
+                                custom_match = c(Kosovo = "XKX", Zanzibar = "ZZB")), 
+  .before = countryname) %>%
+  
+  group_by(country_text_id) %>% 
+  filter(year == 2020) %>%
+  slice_max(year, with_ties = TRUE) %>%
+  select(country_text_id, countryname, year, lpop, actv_groups_count) %>% 
+  na.omit()
+
+epr_group <- epr_group_raw %>% mutate(
+  country_text_id = countrycode(epr_group_raw$countryname, origin = "country.name", 
+                                destination = "iso3c", 
+                                custom_match = c(Kosovo = "XKX", Zanzibar = "ZZB")), 
+  .before = year) %>%
+  
+  group_by(country_text_id) %>% 
+  filter(year == 2020) %>%
+  slice_max(year, with_ties = TRUE)
+
+# Alle Länder mit weniger als 2 active groups löschen
+epr_country <- epr_country %>% filter(actv_groups_count >= 2)
+
+rm(epr_country_raw, epr_group_raw)
+
+```
+
+#### Finale Fallauswahl
+
+```{r}
+
+# select countries
+case_selection_df <- inner_join(vdem_final, epr_country %>% select(-year), by = "country_text_id")
+
+# create column for minorities
+minority_col <- c()
+for(country in as.list(case_selection_df$country_text_id)){
+  minorities <- as.vector(epr_group %>% filter(country_text_id == country))$groupname
+  minority_col <- append(x = minority_col, values = toString(minorities))
+}
+
+# show table
+knitr::kable(case_selection_df %>% select(country_text_id, country_name) %>% mutate(minorities = minority_col), format="html")
+
+```
+
+### Generate Excel table that needs to be filled out
+
+```{r}
+# create excel sheet that will be used for data collection
+excel_collection_sheet <- epr_group %>% filter(country_text_id %in% as.list(case_selection_df$country_text_id)) %>%
+  select(gwgroupid, country_text_id, countryname, groupname, groupsize) %>%
+  mutate(v2paenname = c(""),
+         v2paorname = c(""),
+         v2paseatshare = c(""),
+         v2panumbseat = c(""),
+         v2patotalseat = c(""),
+         v2pavote = c(""),
+         isParty = c(""),
+         source = c(""))
+
+
+excel_collection_sheet <- left_join(x = excel_collection_sheet, y = case_selection_df %>% select(year, country_text_id), by = "country_text_id")  %>%
+  relocate(country_text_id, countryname, gwgroupid, groupname, year)
+
+excel_collection_sheet <- anti_join(x = excel_collection_sheet, 
+                                    y = excel_collection_sheet %>% group_by(country_text_id) %>% slice_max(groupsize))
+
+#openxlsx::write.xlsx(x = excel_collection_sheet, paste0(rootpath, "interim_data/data_collection.xlsx"))
+```
+
+# Daten aufbereiten
+
+## 1. Gesammelte Daten importieren
+
+```{r}
+# load xlsx file
+party_data_collected <- openxlsx::read.xlsx(xlsxFile = paste0(rootpath, "final_data/collected_party_data.xlsx")) %>% select(-source)
+
+### TEMP: filter "empty" rows
+party_data_collected <- party_data_collected %>% filter(is.na(isParty) == FALSE)
+
+
+```
+
+## 2. Load IPU / Reserved Seats Data
+
+```{r}
+# IPU Parline -------------------------------------------------------------
+# Kosovo & Taiwan sind nicht registriert in IPU
+
+print("Loading IPU Parline...")
+if(!exists("ipu_data")){
+  print("Loading IPU Parline...")
+  ipu_data <- fromJSON("https://api.data.ipu.org/v1/chambers?page[size]=1000000&page[number]=1&fields=is_reserved_seats%2Ccountry_code%2Cparliament%2Cparliament_country&filter=struct_parl_status.term%3Aeq%3Alower_chamber")
+  print("IPU Parline loaded!")
+}
+is_reserved_seats <- c()
+date_reserved_seats <- c()
+
+# date_to date_valid_until sind immer leer -> Daten sind aktuell und müssen nicht gefiltert werden in diesem Fall (Stand 06/2024)
+for(entry in ipu_data$data$attributes$is_reserved_seats){
+  res_value <- ifelse(is.null(entry$value), NA, entry$value)
+  is_reserved_seats <- append(is_reserved_seats, res_value)
+}
+
+countries <- ipu_data$data$attributes$parliament$value
+
+ipu_reservedseat_data <- data.frame(countrycode = countries, 
+                                    iso3c = countrycode(countries, origin = "iso2c", destination = "iso3c"), 
+                                    reserved_seat = is_reserved_seats) %>%
+  select(-countrycode) %>% 
+  rename(country_text_id = iso3c)
+
+ipu_reservedseat_data$reserved_seat <- as.integer(ipu_reservedseat_data$reserved_seat)
+
+rm(date_reserved_seats, countries, is_reserved_seats, ipu_data, entry)
+
+```
+
+## 3. Datensätze in zusammenfügen
+
+```{r}
+minorities_data <- left_join(party_data_collected, vdem_final %>% select(-year), by = "country_text_id")
+minorities_data <- left_join(minorities_data, ipu_reservedseat_data, by = "country_text_id")
+minorities_data$representation <- log( (minorities_data$seatshare / minorities_data$groupsize) + 1 )
+minorities_data$partyban_ethnic <- replace_na(minorities_data$v2psbantar_0, 0)
+minorities_data$partyban_rel <- replace_na(minorities_data$v2psbantar_1, 0)
+minorities_data$electoral_dem <- if_else(minorities_data$e_v2x_polyarchy_5C == 1, 1, 0, -1)
+minorities_data <- minorities_data %>%
+  mutate(v2elparlel = case_when(
+    v2elparlel == 0 ~ 0,
+    v2elparlel == 1 ~ 2,
+    v2elparlel == 2 ~ 1
+  ))
+
+minorities_data <- minorities_data %>% select(-e_v2x_polyarchy_5C, -v2psbantar_0, -v2psbantar_1, -v2psparban) %>%
+  rename(seats = v2panumbseat, 
+         partyname_en = v2paenname, 
+         partyname_or = v2paorname, 
+         totalseats = v2patotalseat, 
+         candidate_restr = v2elrstrct, 
+         electoral_sys = v2elparlel, 
+         #voteshare = v2pavote
+         ) %>%
+  select(
+    #-voteshare, 
+    -gwgroupid, -country_name) %>%
+  relocate(country_text_id, countryname, groupname, year, partyname_en, partyname_or, isParty, groupsize, seatshare, seats, totalseats, representation, electoral_sys, reserved_seat, electoral_dem, candidate_restr, partyban_ethnic, partyban_rel)
+
+# invert scale 
+minorities_data$candidate_restr <- -(minorities_data$candidate_restr - 1)
+
+# Add data for kosovo (reserved_seat = 1) and Taiwan (reserved_seat = 1)
+minorities_data[minorities_data$country_text_id == "XKX", 'reserved_seat'] = 1 
+minorities_data[minorities_data$country_text_id == "TWN", 'reserved_seat'] = 1 
+
+minorities_data <- minorities_data %>% drop_na(groupsize)
+
+openxlsx::write.xlsx(minorities_data, paste0(rootpath, "final_data/minorities_data.xlsx"))
+
+```
