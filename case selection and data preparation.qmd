@@ -121,7 +121,7 @@ if(!exists("epr_country_raw")){
   print("EPR Country loaded!")
 }
 
-# TODO: Theoretisch für jedes Land zum jeweiligen Zeitpunkt die ethnische Zusammensetzung filter statt year == 2019
+# TODO: für jedes Land zum jeweiligen Zeitpunkt die ethnische Zusammensetzung filter statt year == 2019
 epr_country <- epr_country_raw %>% mutate(
   country_text_id = countrycode(epr_country_raw$countryname, origin = "country.name", 
                                 destination = "iso3c", 
