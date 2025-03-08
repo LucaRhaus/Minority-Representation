@@ -1,4 +1,4 @@
-**Repository for a term paper project on minority representation in democracies. **
+**Repository for a term paper project on minority representation in democracies. Written in R-Quarto.**
 
 ## 1. Setup
 
