@@ -11,7 +11,7 @@ execute:
   warning: false
 ---
 
-# 0. Libraries laden & Working Directory setzen
+# Libraries laden & Working Directory setzen
 
 ```{r}
 library(knitr)
@@ -28,14 +28,20 @@ library(PerformanceAnalytics)
 library(patchwork)
 library(gmodels)
 library(car)
+library(ggpubr)
 
 
 # Main Directory
 rootpath = "D:/Development/Python Data Science/Minority-Representation/"
 
+# create export dir
+if(dir.exists("./plots/") == F){
+  dir.create("./plots/")
+}
+
 ```
 
-# Exportierte Daten laden
+# 1. Exportierte Daten laden
 
 ```{r}
 
@@ -46,77 +52,62 @@ minorities_data <- openxlsx::read.xlsx(paste0(rootpath, "final_data/minorities_d
 
 ```
 
-# Auswertung: Hierarchisches Lineares Regressionsmodell
+# 2. Auswertung: Hierarchisches Lineares Regressionsmodell
 
-## 1. Lineares Regressionsmodell aus der aV und den Kontrollvariablen
+## 2.1 Lineares Regressionsmodell 1 aus der aV und den Kontrollvariablen
 
 ```{r}
 
-lm_control <- lm(representation ~ 
+lm_c <- lm(representation ~ 
                    electoral_dem +
                    candidate_restr +
                    partyban_ethnic + 
                    partyban_rel, 
                  data = minorities_data)
 
-print(summary(lm_control))
+print(summary(lm_c))
 
 ```
 
-Regressionsmodell Kontrollvariablen:
 
--   electoral_dem: Demokratielevel hat einen negativen Effekt: Je demokratischer desto schlechter die Repräsentation - Geringer Einfluss der nur grenzwertig signifikant ist
-
--   candidate_restr: Signifikanter negativer Einfluss auf Repräsentation
-
--   Alle anderen Kontrollvariablen (partyban_ethnic, partyban_rel) haben keinen signifikanten Einfluss
-
--   Multiple und Adjusted R-Squared sind beide niedrig: 5,2% bzw. 3,2% Erklärungskraft der Kontrollvariablen
-
--   Modell hat einen p-value von 0,039, also nur grenzwertig signifikant
-
-Interpretation:
-
--   Beschränkungen bei der Aufstellung von Kandidaten können die Repräsentation von Minderheiten negativ beeinflussen
-
--   Die anderen Kontrollvariablen können die Varianz der Variable Repräsentation nicht hinreichend erklären
-
-## 2. Lineares Regressionsmodell aus der aV, uV1 und den Kontrollvariablen
+## 2.2 Lineares Regressionsmodell 2 aus der aV, uV1 (quadratisch) und den Kontrollvariablen
 
 ```{r}
 
 lm_c_uv1 <- lm(representation ~ 
-                   electoral_sys +
-                   electoral_dem +
-                   candidate_restr +
-                   partyban_ethnic + 
-                   partyban_rel, 
-                 data = minorities_data)
+                 I(electoral_sys^2) + 
+                 electoral_dem + 
+                 candidate_restr + 
+                 partyban_ethnic + 
+                 partyban_rel, 
+               data = minorities_data)
 
 print(summary(lm_c_uv1))
 
 ```
 
-### Bietet das Hinzufügen von uV1 eine signifikant bessere Erklärungskraft als das Modell mit den Kontrollvariablen?
+# VIF Modell 2
 
 ```{r}
 
-anova(lm_control, lm_c_uv1)
+vif(lm_c_uv1)
 
 ```
 
-Die Berücksichtitgung des Wahlsystems verbessert das Modell nur leicht:
+Verlgeich zwischen Kontrollvariablen Modell und Modell mit uV1
 
--   **RSS (Residual Sum of Squares)**: Modell 2 hat einen etwas kleineren Wert, was bedeutet, dass die Varianz der aV Repräsentation besser erklärt werden kann -\> Spiegelt sich auch in "Df" (Difference in Degree of Freedom) wieder.
+```{r}
 
--   Aber: p-value 0,07 ist \>0.05 und somit ist das zweite Modell nicht *signifikant* besser als das erste Modell
+anova(lm_c, lm_c_uv1)
 
-## 3. Lineares Regressionsmodell aus der aV, uV1, uV2 und Kontrollvariablen
+```
+
+## 2.3 Lineares Regressionsmodell 3 aus der aV, uV1, uV2 und Kontrollvariablen
 
 ```{r}
 
 lm_c_uv1_2 <- lm(representation ~ 
-                   electoral_sys +
+                   I(electoral_sys^2) +
                    reserved_seat +
                    electoral_dem +
                    candidate_restr +
@@ -134,49 +125,6 @@ anova(lm_c_uv1, lm_c_uv1_2)
 
 ```
 
-# VIF Modell 2
-
-```{r}
-
-vif(lm_c_uv1)
-
-```
-
-# polynominale (quadratische) regression lm2
-
-```{r}
-# Quadratische Regression
-lm_c_uv1_quad <- lm(representation ~ I(electoral_sys^2) + electoral_dem + candidate_restr + partyban_ethnic + partyban_rel, data = minorities_data)
-
-# Modell zusammenfassen
-summary(lm_c_uv1_quad)
-
-```
-# anova control model (lm1) vs second model with quad. rel. (lm2_q)
-```{r}
-anova(lm_control, lm_c_uv1_quad)
-
-
-```
-
-# polynominale (quadratische) regression grundlage lm3
-
-```{r}
-# Quadratische Regression
-lm4 <- lm(representation ~ reserved_seat + I(electoral_sys^2) + electoral_dem + candidate_restr + partyban_ethnic + partyban_rel, data = minorities_data)
-
-# Modell zusammenfassen
-summary(lm4)
-
-```
-
-# anova test 3
-
-```{r}
-
-anova(lm_c_uv1_2, lm4)
-
-```
 
 # Deskriptive Auswertung
 
@@ -251,15 +199,20 @@ CrossTable(minorities_data$represent_dichotom,
 
 hist <- minorities_data %>% ggplot(aes(x = representation)) +
   geom_histogram(aes(y = ..density..), bins = 10, fill = "lightgreen", color = "black", alpha = 0.7) +
-  labs(title = "", x = "", y = "") +
+  labs(title = "", y = "frequency") +
   theme_minimal()
 
 boxplot <- minorities_data %>% ggplot(aes(x = "", y = representation)) +
   geom_boxplot(fill = "lightgreen", color = "black", alpha = 0.7) +
-  labs(title = " ", x = "", y = "") +
+  labs(title = " ", x = "") +
+  coord_flip() +
   theme_minimal()
 
-boxplot + hist
+combined <- ggarrange(hist, boxplot, ncol = 2, nrow = 1)
+
+annotate_figure(combined, top = text_grob("Minority Representation: Histogram and Boxplot", size = 14))
+
+ggsave("./plots/minority_representation.jpg", width = 7.5, height = 4)
 ```
 
 ## uV1
@@ -320,8 +273,17 @@ minorities_data %>%
     ggtitle("Boxplot Representation by Reserved Seats") +
     scale_color_manual(breaks = c(0, 1), 
                        values = c("black", "lightgreen"), 
-                       labels = c("No Measures", "Reserved Seats"),
-                       name = "Minority Protection Measures")
+                       labels = c("No Reserved Seats", "Reserved Seats"),
+                       name = "Minority Protection Measures") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.length.y = unit(0, "line"),
+        plot.title = element_text(size = 14, hjust = 0.5),
+        axis.title.x = element_text(size = 11),
+        legend.position = "bottom",
+        legend.title = element_blank())
+
+ggsave("./plots/Representation - Reserved Seats.png", width = 7.5, height = 4)
+
 ```
 
 ```{r}
@@ -329,11 +291,21 @@ minorities_data %>%
     ggplot(aes(y = representation, color = as.factor(electoral_sys), group = electoral_sys)) +
     geom_boxplot() +
     coord_flip() +
-    ggtitle("Boxplot Representation by Electoral System") +
+    ggtitle("Minority representation across different electoral systems") +
     scale_color_manual(breaks = c(0, 1, 2), 
                        values = c("firebrick1", "black", "deepskyblue"), 
                        labels = c("Majoritarian", "Mixed", "Proportional"),
-                       name = "Electoral System")
+                       name = "Electoral System") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.length.y = unit(0, "line"),
+        plot.title = element_text(size = 14, hjust = 0.5),
+        axis.title.x = element_text(size = 11),
+        legend.position = "bottom",
+        legend.title = element_blank())
+
+
+ggsave("./plots/Representation by Electoral System.png", width = 7.5, height = 4)
+
 ```
 
 ```{r}

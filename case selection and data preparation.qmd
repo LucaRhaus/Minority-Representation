@@ -27,7 +27,7 @@ library(ggplot2)
 library(whereami)
 
 # Main Directory
-rootpath = "E:/Meine Ablage/Uni/Archiv/4. Semester/Seminar Wahlsysteme/Hausarbeit/R Script and Datasets/Abgabe/"
+rootpath = "D:/Development/Python Data Science/Minority-Representation/"
 
 ```
 
